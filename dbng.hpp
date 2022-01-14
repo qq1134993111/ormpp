@@ -95,15 +95,42 @@ namespace ormpp{
 
         //transaction
         bool begin(){
-            return db_.begin();
+			try
+			{
+                db_.begin();
+				return true;
+			}
+			catch (std::exception& e)
+			{
+				return false;
+			}
+
+         
         }
 
         bool commit(){
-            return db_.commit();
+            
+			try
+			{
+                db_.commit();
+				return true;
+			}
+			catch (std::exception& e)
+			{
+				return false;
+			}
         }
 
         bool rollback(){
-            return db_.rollback();
+            try
+            {
+                 db_.rollback();
+                 return true;
+            }
+            catch (std::exception& e)
+            {
+                return false;
+            }
         }
 
 		bool ping() {
