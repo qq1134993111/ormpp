@@ -13,9 +13,6 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
-    <Filter Include="mysql">
-      <UniqueIdentifier>{fb6d6b55-f6b3-4990-acdf-7614e907989e}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="connection_pool.hpp">
@@ -48,25 +45,16 @@
     <ClInclude Include="utility.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="SqlException.h">
+    <ClInclude Include="mysql_exception.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="MySqlException.h">
+    <ClInclude Include="sql_exception.h">
       <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="mysql\MySqlException.h">
-      <Filter>mysql</Filter>
-    </ClInclude>
-    <ClInclude Include="mysql\MySql.h">
-      <Filter>mysql</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
       <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="mysql\MySql.cpp">
-      <Filter>mysql</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

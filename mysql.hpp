@@ -12,6 +12,7 @@
 #include "entity.hpp"
 #include "type_mapping.hpp"
 #include "utility.hpp"
+#include "mysql_exception.h"
 
 namespace ormpp {
 
@@ -21,16 +22,16 @@ namespace ormpp {
 			disconnect();
 		}
 
+		//host,user,passwd,db,port,timeout
 		template<typename... Args>
-		bool connect(Args&&... args) {
+		void connect(Args&&... args) {
 			if (con_ != nullptr) {
 				mysql_close(con_);
 			}
 
 			con_ = mysql_init(nullptr);
 			if (con_ == nullptr) {
-				set_last_error("mysql init failed");
-				return false;
+				throw mysql_exception("mysql_init init failed");
 			}				
 
 			int timeout = -1;
@@ -38,8 +39,8 @@ namespace ormpp {
 
 			if (timeout > 0) {
 				if (mysql_options(con_, MYSQL_OPT_CONNECT_TIMEOUT, &timeout) != 0) {
-					set_last_error(mysql_error(con_));
-					return false;
+					
+					throw  mysql_exception(con_);
 				}					
 			}
 
@@ -48,21 +49,10 @@ namespace ormpp {
 			mysql_options(con_, MYSQL_SET_CHARSET_NAME, "utf8");
 
 			if (std::apply(&mysql_real_connect, tp) == nullptr) {
-				set_last_error(mysql_error(con_));
-				return false;
+				throw  mysql_exception(con_);
 			}
-
-			return true;
 		}
 
-		void set_last_error(std::string last_error) {
-			last_error_ = std::move(last_error);
-			std::cout << last_error_ << std::endl;//todo, write to log file
-		}
-
-		std::string get_last_error() const {
-			return last_error_;
-		}
 
 		bool ping() {
 			return mysql_ping(con_) == 0;
@@ -78,6 +68,328 @@ namespace ormpp {
 			return true;
 		}
 
+		uint64_t get_last_affect_rows() 
+		{
+			return mysql_affected_rows(con_);
+		}
+
+		//just support execute string sql without placeholders
+		uint64_t exec_commmand(const std::string& sql) 
+		{
+			if (mysql_real_query(con_, sql.data(), sql.size()) != 0)
+			{
+				throw mysql_exception(con_);
+			}
+
+			return get_last_affect_rows();
+		}
+
+		template <typename... Args>
+		uint64_t exec_commmand(const std::string& sql, Args&&... args)
+		{
+			stmt_ = mysql_stmt_init(con_);
+			if (stmt_ == nullptr)
+			{
+				throw mysql_exception("execute mysql_stmt_init failed");
+			}
+			auto guard = guard_statment(stmt_);
+
+			if (0 != mysql_stmt_prepare(stmt_, sql.data(), sql.size()))
+			{
+				std::stringstream ss;
+				ss << "ERROR " << mysql_exception::get_error_code(stmt_) << " :" << mysql_exception::get_error_message(stmt_);
+				if (0 != mysql_stmt_free_result(stmt_))
+				{
+					ss << "; There was an error freeing this statement";
+				}
+				if (0 != mysql_stmt_close(stmt_))
+				{
+					ss << "; There was an error closing this statement";
+				}
+				throw mysql_exception(ss);
+			}
+
+			auto parameter_count = mysql_stmt_param_count(stmt_);
+			auto field_count = mysql_stmt_field_count(stmt_);
+
+			if (0 != field_count)
+			{
+				throw mysql_exception("Tried to run execute_query with execute");
+			}
+
+			if (sizeof...(args) != parameter_count)
+			{
+				std::string err_msg = sql + " ";
+				err_msg += "Incorrect number of parameters; command required ";
+				err_msg += std::to_string(parameter_count);
+				err_msg += " but ";
+				err_msg += std::to_string(sizeof...(args));
+				err_msg += " parameters were provided.";
+
+				throw mysql_exception(err_msg);
+			}
+
+
+			std::vector<MYSQL_BIND> param_binds;
+			set_param_bind(param_binds,args...);
+			
+			if (mysql_stmt_bind_param(stmt_, &param_binds[0]))
+			{
+				throw mysql_exception(stmt_);
+			}
+
+		
+			if (mysql_stmt_execute(stmt_)) 
+			{
+				throw mysql_exception(stmt_);
+			}
+
+			return mysql_stmt_affected_rows(stmt_);
+		
+		}
+
+		template <typename... InputArgs, typename... OutputArgs>
+		uint64_t exec_query(std::vector<std::tuple<OutputArgs...>>& results, const std::string& query, InputArgs&&... args) const
+		{
+			stmt_ = mysql_stmt_init(con_);
+			if (stmt_ == nullptr)
+			{
+				throw mysql_exception("execute_query mysql_stmt_init failed");
+			}
+
+			auto guard = guard_statment(stmt_);
+
+			if (0 != mysql_stmt_prepare(stmt_, query.data(), query.size()))
+			{
+				std::stringstream ss;
+				ss << "ERROR " << mysql_exception::get_error_code(stmt_) << " :" << mysql_exception::get_error_message(stmt_);
+				if (0 != mysql_stmt_free_result(stmt_))
+				{
+					ss << "; There was an error freeing this statement";
+				}
+				if (0 != mysql_stmt_close(stmt_))
+				{
+					ss << "; There was an error closing this statement";
+				}
+				throw mysql_exception(ss);
+			}
+
+			auto parameter_count = mysql_stmt_param_count(stmt_);
+			auto field_count = mysql_stmt_field_count(stmt_);
+
+			if (0 == field_count)
+			{
+				throw mysql_exception("Tried to run execute with execute_query");
+			}
+
+			if (sizeof...(args) != parameter_count)
+			{
+				std::string err_msg = query + " ";
+				err_msg += "Incorrect number of parameters; command required ";
+				err_msg += std::to_string(parameter_count);
+				err_msg += " but ";
+				err_msg += std::to_string(sizeof...(args));
+				err_msg += " parameters were provided.";
+
+				throw mysql_exception(err_msg);
+			}
+
+			std::vector<MYSQL_BIND> param_binds;
+			set_param_bind(param_binds, args...);
+
+			if (mysql_stmt_bind_param(stmt_, &param_binds[0]))
+			{
+				throw mysql_exception(stmt_);
+			}
+
+
+			// Check that the sizes match
+			if (field_count != sizeof...(OutputArgs))
+			{
+				std::string err_msg("Incorrect number of output parameters; query required ");
+				err_msg += std::to_string(field_count);
+				err_msg += " but ";
+				err_msg += std::to_string(sizeof...(OutputArgs));
+				err_msg += " parameters were provided";
+				throw mysql_exception(err_msg);
+			}
+
+		
+			
+			std::vector<MYSQL_BIND> out_parameters{ field_count,0 };
+			std::vector<uint64_t> out_lengths{ field_count,0 };
+			std::vector<uint8_t> out_null_flags{field_count, 0	};
+			std::tuple<OutputArgs...> tp{};
+
+			size_t index = 0;
+			iguana::for_each(tp,
+				[&out_parameters, &out_lengths,&out_null_flags](auto& item, auto I)
+				{
+					using U = std::remove_reference_t<decltype(item)>;
+					if constexpr (std::is_arithmetic_v<U>)
+					{
+						out_parameters[I].buffer_type = (enum_field_types)ormpp_mysql::type_to_id(identity<U>{});
+						out_parameters[I].buffer = &item;
+						out_parameters[I].buffer_length = sizeof(item);
+						out_parameters[I].length = &out_lengths[I];
+						out_parameters[I].is_null = &out_null_flags[I];
+						
+					}
+					else if constexpr (std::is_same_v<std::string, U>)
+					{
+						item.resize(20, 0);
+						out_parameters[I].buffer_type = MYSQL_TYPE_VAR_STRING;
+						out_parameters[I].buffer = item.data();
+						out_parameters[I].buffer_length = item.size();
+						out_parameters[I].length = &out_lengths[I];
+						out_parameters[I].is_null = &out_null_flags[I];
+					}
+					else if constexpr (is_std_char_array_v<U>)
+					{
+						out_parameters[I].buffer_type = MYSQL_TYPE_STRING;
+						out_parameters[I].buffer = &item[0];
+						out_parameters[I].buffer_length = sizeof(item);
+						out_parameters[I].length = &out_lengths[I];
+						out_parameters[I].is_null = &out_null_flags[I];
+					}
+					else
+					{
+						std::cout << typeid(U).name() << std::endl;
+						static_assert(false, "Unknown value type");
+					}
+
+				}, 
+				std::make_index_sequence<std::tuple_size_v<tp>>{});
+
+			if (mysql_stmt_bind_result(stmt_, &out_parameters[0]))
+			{
+				throw mysql_exception(stmt_);
+			}
+
+			if (mysql_stmt_execute(stmt_))
+			{
+				throw mysql_exception(stmt_);
+			}
+
+			if (mysql_stmt_store_result(stmt_)) 
+			{
+				throw mysql_exception(stmt_);
+			}
+
+			for(;;)
+			{
+				auto fetch_status = mysql_stmt_fetch(stmt_);
+				if (fetch_status != 0 && fetch_status != MYSQL_DATA_TRUNCATED)
+				{
+					break;
+				}
+
+				//if (fetch_status == MYSQL_DATA_TRUNCATED)
+				{
+					iguana::for_each(tp,
+						[&out_parameters, &out_lengths, &out_null_flags, &stmt_](auto& item, auto I)
+						{
+							using U = std::remove_reference_t<decltype(item)>;
+							if constexpr (std::is_same_v<std::string, U>)
+							{
+								if (!out_null_flags[I])
+								{
+									const size_t untruncated_length = out_lengths[I].size();
+									if (untruncated_length > item.size())
+									{
+										const size_t already_retrieved = item.size();
+										item.resize(untruncated_length, 0);
+										MYSQL_BIND& bind = out_parameters[I];
+										bind.buffer = &item[already_retrieved];
+										bind.buffer_length = item.size()-already_retrieved;
+
+										const int status = mysql_stmt_fetch_column(
+											stmt_,
+											&bind,
+											I,
+											already_retrieved);
+
+										if (0 != status)
+										{
+											throw mysql_exception(stmt_);
+										}
+
+									}
+									else if (untruncated_length < item.size())
+									{
+										item.resize(untruncated_length);
+									}
+								}
+								else
+								{
+									item.clear();
+								}
+
+								// Now, for subsequent fetches, we need to reset the buffers
+								out_parameters[I].buffer = item.data();
+								out_parameters[I].buffer_length = item.size();
+
+							}
+
+						},
+						std::make_index_sequence<sizeof...(OutputArgs)>{});
+
+					// If we've changed the buffers, we need to rebind
+					if (0 != mysql_stmt_bind_result(stmt_, out_parameters.data()))
+					{
+						throw mysql_exception(stmt_);
+					}
+				}
+
+				results.push_back(tp);
+				
+			}
+
+			return mysql_stmt_affected_rows(stmt_);
+
+		}
+
+		template <typename... Args>
+		uint64_t execute(Args&&... args)
+		{
+			return exec_commmand(std::forward<Args>(args)...);
+		}
+
+		//transaction
+		bool begin()
+		{
+			if (mysql_query(con_, "BEGIN"))
+			{
+				//                fprintf(stderr, "%s\n", mysql_error(con_));
+				return false;
+			}
+
+			return true;
+		}
+
+		bool commit()
+		{
+			if (mysql_query(con_, "COMMIT"))
+			{
+				//                fprintf(stderr, "%s\n", mysql_error(con_));
+				return false;
+			}
+
+			return true;
+		}
+
+		bool rollback()
+		{
+			if (mysql_query(con_, "ROLLBACK"))
+			{
+				//                fprintf(stderr, "%s\n", mysql_error(con_));
+				return false;
+			}
+
+			return true;
+		}
+
+public:
 		template<typename T, typename... Args >
 		constexpr bool create_datatable(Args&&... args) {
 			std::string sql = generate_createtb_sql<T>(std::forward<Args>(args)...);
@@ -131,9 +443,7 @@ namespace ormpp {
 			return true;
 		}
 
-		int get_last_affect_rows() {
-			return (int)mysql_affected_rows(con_);
-		}
+		
 
 		//for tuple and string with args...
 		template<typename T, typename Arg, typename... Args>
@@ -367,47 +677,9 @@ namespace ormpp {
 			return v;
 		}
 
-		bool has_error() {
-			return has_error_;
-		}
+	
 
-		//just support execute string sql without placeholders
-		bool execute(const std::string& sql) {
-			if (mysql_query(con_, sql.data()) != 0) {
-				fprintf(stderr, "%s\n", mysql_error(con_));
-				return false;
-			}
-
-			return true;
-		}
-
-		//transaction
-		bool begin() {
-			if (mysql_query(con_, "BEGIN")) {
-				//                fprintf(stderr, "%s\n", mysql_error(con_));
-				return false;
-			}
-
-			return true;
-		}
-
-		bool commit() {
-			if (mysql_query(con_, "COMMIT")) {
-				//                fprintf(stderr, "%s\n", mysql_error(con_));
-				return false;
-			}
-
-			return true;
-		}
-
-		bool rollback() {
-			if (mysql_query(con_, "ROLLBACK")) {
-				//                fprintf(stderr, "%s\n", mysql_error(con_));
-				return false;
-			}
-
-			return true;
-		}
+		
 
 	private:
 		template<typename T, typename... Args >
@@ -497,22 +769,44 @@ namespace ormpp {
 			if constexpr(std::is_arithmetic_v<U>) {
 				param.buffer_type = (enum_field_types)ormpp_mysql::type_to_id(identity<U>{});
 				param.buffer = const_cast<void*>(static_cast<const void*>(&value));
+				param.is_unsigned = std::is_signed_v<U>;
 			}
 			else if constexpr(std::is_same_v<std::string, U>) {
 				param.buffer_type = MYSQL_TYPE_STRING;
 				param.buffer = (void*)(value.c_str());
 				param.buffer_length = (unsigned long)value.size();
 			}
-			else if constexpr(std::is_same_v<const char*, U> || is_char_array_v<U>) {
+			else if constexpr(std::is_same_v<const char*, U>) {
 				param.buffer_type = MYSQL_TYPE_STRING;
 				param.buffer = (void*)(value);
 				param.buffer_length = (unsigned long)strlen(value);
 			}
+			else if constexpr (is_std_char_array_v<U>)
+			{
+				param.buffer_type = MYSQL_TYPE_STRING;
+				param.buffer = (void*)(value);
+				param.buffer_length = std::min<unsigned long>(strlen(value), notstd::is_array<U>::array_size);
+			}
+			else 
+			{
+				static_assert(false,"Unknown value type");
+			}
 			param_binds.push_back(param);
 		}
 
+		template<typename T, typename... ARGS>
+		constexpr void set_param_bind(std::vector<MYSQL_BIND>& param_binds, T&& value, ARGS&&... args)
+		{
+			set_param_bind(param_binds, value);
+			if (sizeof...(args) > 0)
+			{
+				set_param_bind(param_binds, std::forward<ARGS&&>(args)...);
+			}
+		}
+
+
 		template<typename T>
-		int stmt_execute(const T& t) {
+		uint64_t stmt_execute(const T& t) {
 			std::vector<MYSQL_BIND> param_binds;
 			auto it = auto_key_map_.find(get_name<T>());
 			std::string auto_key = (it == auto_key_map_.end()) ? "" : it->second;

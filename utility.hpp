@@ -171,6 +171,34 @@ namespace ormpp{
 	template<class T>
 	constexpr bool is_char_array_v = std::is_array_v<T>&&std::is_same_v<char, std::remove_pointer_t<std::decay_t<T>>>;
 
+    namespace notstd {
+        template<class T>
+        struct is_array :std::is_array<T>
+        {
+            using data_type = std::remove_pointer_t < std::decay_t<T>>;
+            static	const int array_size = std::extent_v<T>;
+        };
+
+        template<class T, std::size_t N>
+        struct is_array<std::array<T, N>> :std::true_type
+        {
+            using data_type = T;
+            static	const int array_size = N;
+        };
+
+        // optional:
+        template<class T>
+        struct is_array<T const> :is_array<T> {};
+        template<class T>
+        struct is_array<T volatile> :is_array<T> {};
+        template<class T>
+        struct is_array<T volatile const> :is_array<T> {};
+    }
+
+    template<class T>
+    constexpr bool is_std_char_array_v = notstd::is_array<T>::value && std::is_same_v<char, notstd::is_array<T>::data_type>;
+
+
 	template<size_t N>
 	inline constexpr size_t char_array_size(char(&)[N]) { return N; }
 

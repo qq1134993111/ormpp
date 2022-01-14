@@ -41,7 +41,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v142</PlatformToolset>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
@@ -156,20 +156,17 @@
     <ClInclude Include="dbng.hpp" />
     <ClInclude Include="entity.hpp" />
     <ClInclude Include="mysql.hpp" />
-    <ClInclude Include="MySqlException.h" />
-    <ClInclude Include="mysql\MySql.h" />
-    <ClInclude Include="mysql\MySqlException.h" />
+    <ClInclude Include="mysql_exception.h" />
     <ClInclude Include="pg_types.h" />
     <ClInclude Include="postgresql.hpp" />
-    <ClInclude Include="SqlException.h" />
     <ClInclude Include="sqlite.hpp" />
+    <ClInclude Include="sql_exception.h" />
     <ClInclude Include="type_mapping.hpp" />
     <ClInclude Include="unit_test.hpp" />
     <ClInclude Include="utility.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="mysql\MySql.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

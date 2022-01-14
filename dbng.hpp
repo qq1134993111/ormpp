@@ -22,7 +22,16 @@ namespace ormpp{
 	
         template <typename... Args>
         bool connect(Args&&... args){
-            return  db_.connect(std::forward<Args>(args)...);
+            try 
+            {
+                 db_.connect(std::forward<Args>(args)...);
+                 return true;
+            }
+            catch(std::exception& e)
+            {
+                return false;
+            }
+           
         }
 
         bool disconnect(){
