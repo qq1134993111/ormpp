@@ -87,30 +87,30 @@ namespace ormpp {
 		template <typename... Args>
 		uint64_t exec_commmand(const std::string& sql, Args&&... args)
 		{
-			stmt_ = mysql_stmt_init(con_);
-			if (stmt_ == nullptr)
+			auto stmt = mysql_stmt_init(con_);
+			if (stmt == nullptr)
 			{
 				throw mysql_exception("execute mysql_stmt_init failed");
 			}
-			auto guard = guard_statment(stmt_);
+			auto guard = guard_statment(stmt);
 
-			if (0 != mysql_stmt_prepare(stmt_, sql.data(), sql.size()))
+			if (0 != mysql_stmt_prepare(stmt, sql.data(), sql.size()))
 			{
 				std::stringstream ss;
-				ss << "ERROR " << mysql_exception::get_error_code(stmt_) << " :" << mysql_exception::get_error_message(stmt_);
-				if (0 != mysql_stmt_free_result(stmt_))
+				ss << "ERROR " << mysql_exception::get_error_code(stmt) << " :" << mysql_exception::get_error_message(stmt);
+				if (0 != mysql_stmt_free_result(stmt))
 				{
 					ss << "; There was an error freeing this statement";
 				}
-				if (0 != mysql_stmt_close(stmt_))
+				if (0 != mysql_stmt_close(stmt))
 				{
 					ss << "; There was an error closing this statement";
 				}
 				throw mysql_exception(ss);
 			}
 
-			auto parameter_count = mysql_stmt_param_count(stmt_);
-			auto field_count = mysql_stmt_field_count(stmt_);
+			auto parameter_count = mysql_stmt_param_count(stmt);
+			auto field_count = mysql_stmt_field_count(stmt);
 
 			if (0 != field_count)
 			{
@@ -133,18 +133,18 @@ namespace ormpp {
 			std::vector<MYSQL_BIND> param_binds;
 			set_param_bind(param_binds, args...);
 
-			if (mysql_stmt_bind_param(stmt_, &param_binds[0]))
+			if (mysql_stmt_bind_param(stmt, &param_binds[0]))
 			{
-				throw mysql_exception(stmt_);
+				throw mysql_exception(stmt);
 			}
 
 
-			if (mysql_stmt_execute(stmt_))
+			if (mysql_stmt_execute(stmt))
 			{
-				throw mysql_exception(stmt_);
+				throw mysql_exception(stmt);
 			}
 
-			return mysql_stmt_affected_rows(stmt_);
+			return mysql_stmt_affected_rows(stmt);
 
 		}
 
@@ -329,8 +329,9 @@ namespace ormpp {
 								}
 
 								// Now, for subsequent fetches, we need to reset the buffers
-								out_parameters[I].buffer = item.data();
-								out_parameters[I].buffer_length = item.size();
+
+								out_parameters[I].buffer = !item.empty()?item.data():nullptr;
+								out_parameters[I].buffer_length = !item.empty() ? item.size():1;//buffer_length 为0会触发mysql断言,改为最小为1
 
 							}
 
@@ -395,10 +396,8 @@ namespace ormpp {
 		constexpr bool create_datatable(Args&&... args) {
 			std::string sql = generate_createtb_sql<T>(std::forward<Args>(args)...);
 			sql += " DEFAULT CHARSET=utf8";
-			if (mysql_query(con_, sql.data())) {
-				fprintf(stderr, "%s\n", mysql_error(con_));
-				return false;
-			}
+
+			execute(sql);
 
 			return true;
 		}
@@ -436,10 +435,8 @@ namespace ormpp {
 		template<typename T, typename... Args>
 		constexpr bool delete_records(Args&&... where_conditon) {
 			auto sql = generate_delete_sql<T>(std::forward<Args>(where_conditon)...);
-			if (mysql_query(con_, sql.data())) {
-				fprintf(stderr, "%s\n", mysql_error(con_));
-				return false;
-			}
+			
+			execute(sql);
 
 			return true;
 		}
