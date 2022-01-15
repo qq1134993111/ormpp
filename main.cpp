@@ -64,6 +64,30 @@ REFLECTION(simple, id, code, age);
 using namespace ormpp;
 const char* ip = "127.0.0.1"; //your database ip
 
+TEST_CASE(mysql_test_query) {
+    mysql my;
+    my.connect(ip, "root", "hao@19900115", "feather");
+  
+
+	//for (int i = 0; i < 10; i++)
+	//{
+	//	int id = 1;
+	//	int pid = id * 10;
+	//	std::string title = "TEST";
+	//	std::string content = "hello world";
+	//	time_t t = 10;
+	//	my.execute("insert into article_detail values(?,?,?,?,?)", id, pid, title, content, t);
+	//}
+
+    std::tuple<int, int, std::string, std::string, int> tp;
+    std::vector<decltype(tp)> v;
+    my.exec_query(v,"select * from article_detail where id>=? ",1);
+    
+    int i;
+    i = 0;
+
+}
+
 //TEST_CASE(mysql_performance){
 //    dbng<mysql> mysql;
 //
@@ -97,6 +121,7 @@ const char* ip = "127.0.0.1"; //your database ip
 //    s = duration_cast<duration<double>>(high_resolution_clock::now() - m_begin).count();
 //    std::cout<<s<<'\n';
 //}
+
 
 template<class T, size_t N>
 constexpr size_t size(T(&)[N]) { return N; }
