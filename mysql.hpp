@@ -18,7 +18,7 @@ namespace ormpp
 {
 
 	class mysql_result_set;
-	class  mysql_prepared_statement;
+	class mysql_prepared_statement;
 
 	class mysql
 	{
@@ -485,7 +485,7 @@ namespace ormpp
 		}
 
 		template<typename T, typename... Args>
-		constexpr int insert(const std::vector<T>& t, Args&&... args) {
+		constexpr uint64_t insert(const std::vector<T>& t, Args&&... args) {
 			auto name = get_name<T>();
 			std::string sql = auto_key_map_[name].empty() ? generate_insert_sql<T>(false) : generate_auto_insert_sql<T>(auto_key_map_, false);
 
@@ -493,14 +493,14 @@ namespace ormpp
 		}
 
 		template<typename T, typename... Args>
-		constexpr int update(const std::vector<T>& t, Args&&... args) {
+		constexpr uint64_t update(const std::vector<T>& t, Args&&... args) {
 			std::string sql = generate_insert_sql<T>(true);
 
 			return insert_impl(sql, t, std::forward<Args>(args)...);
 		}
 
 		template<typename T, typename... Args>
-		constexpr int insert(const T& t, Args&&... args) {
+		constexpr uint64_t insert(const T& t, Args&&... args) {
 			//insert into person values(?, ?, ?);
 			auto name = get_name<T>();
 			std::string sql = auto_key_map_[name].empty() ? generate_insert_sql<T>(false) : generate_auto_insert_sql<T>(auto_key_map_, false);
@@ -509,7 +509,7 @@ namespace ormpp
 		}
 
 		template<typename T, typename... Args>
-		constexpr int update(const T& t, Args&&... args) {
+		constexpr uint64_t update(const T& t, Args&&... args) {
 			std::string sql = generate_insert_sql<T>(true);
 			return insert_impl(sql, t, std::forward<Args>(args)...);
 		}
@@ -527,238 +527,57 @@ namespace ormpp
 
 		//for tuple and string with args...
 		template<typename T, typename Arg, typename... Args>
-		constexpr std::enable_if_t<!iguana::is_reflection_v<T>, std::vector<T>> query(const Arg& s, Args&&... args) {
+		constexpr std::enable_if_t<!iguana::is_reflection_v<T>, std::vector<T>> query(const Arg& s, Args&&... args)
+		{
 			static_assert(iguana::is_tuple<T>::value);
-			constexpr auto SIZE = std::tuple_size_v<T>;
-
-			std::string sql = s;
-			constexpr auto Args_Size = sizeof...(Args);
-			if (Args_Size != 0) {
-				if (Args_Size != std::count(sql.begin(), sql.end(), '?')) {
-					has_error_ = true;
-					return {};
-				}
-
-				sql = get_sql(sql, std::forward<Args>(args)...);
-			}
-
-			stmt_ = mysql_stmt_init(con_);
-			if (!stmt_) {
-				has_error_ = true;
-				return {};
-			}
-
-			if (mysql_stmt_prepare(stmt_, sql.c_str(), (int)sql.size())) {
-				fprintf(stderr, "%s\n", mysql_error(con_));
-				has_error_ = true;
-				return {};
-			}
-
-			auto guard = guard_statment(stmt_);
-
-			std::array<MYSQL_BIND, result_size<T>::value> param_binds = {};
-			std::list<std::vector<char>> mp;
-
 			std::vector<T> v;
-			T tp{};
-
-			size_t index = 0;
-			iguana::for_each(tp, [&param_binds, &mp, &index](auto& item, auto I) {
-				using U = std::remove_reference_t<decltype(item)>;
-				if constexpr (std::is_arithmetic_v<U>) {
-					param_binds[index].buffer_type = (enum_field_types)ormpp_mysql::type_to_id(identity<U>{});
-					param_binds[index].buffer = &item;
-					index++;
-				}
-				else if constexpr (std::is_same_v<std::string, U>) {
-					std::vector<char> tmp(65536, 0);
-					mp.emplace_back(std::move(tmp));
-					param_binds[index].buffer_type = MYSQL_TYPE_STRING;
-					param_binds[index].buffer = &(mp.back()[0]);
-					param_binds[index].buffer_length = 65536;
-					index++;
-				}
-				else if constexpr (iguana::is_reflection_v<U>) {
-					iguana::for_each(item, [&param_binds, &mp, &item, &index](auto& ele, auto i) {
-						using U = std::remove_reference_t<decltype(std::declval<U>().*ele)>;
-						if constexpr (std::is_arithmetic_v<U>) {
-							param_binds[index].buffer_type = (enum_field_types)ormpp_mysql::type_to_id(identity<U>{});
-							param_binds[index].buffer = &(item.*ele);
-						}
-						else if constexpr (std::is_same_v<std::string, U>) {
-							std::vector<char> tmp(65536, 0);
-							mp.emplace_back(std::move(tmp));
-							param_binds[index].buffer_type = MYSQL_TYPE_STRING;
-							param_binds[index].buffer = &(mp.back()[0]);
-							param_binds[index].buffer_length = 65536;
-						}
-						else if constexpr (is_char_array_v<U>) {
-							std::vector<char> tmp(sizeof(U), 0);
-							mp.emplace_back(std::move(tmp));
-							param_binds[index].buffer_type = MYSQL_TYPE_VAR_STRING;
-							param_binds[index].buffer = &(mp.back()[0]);
-							param_binds[index].buffer_length = (unsigned long)sizeof(U);
-						}
-						index++;
-						});
-				}
-				else if constexpr (is_char_array_v<U>) {
-					param_binds[index].buffer_type = MYSQL_TYPE_VAR_STRING;
-					std::vector<char> tmp(sizeof(U), 0);
-					mp.emplace_back(std::move(tmp));
-					param_binds[index].buffer = &(mp.back()[0]);
-					param_binds[index].buffer_length = (unsigned long)sizeof(U);
-					index++;
-				}
-				else {
-					std::cout << typeid(U).name() << std::endl;
-				}
-				}, std::make_index_sequence<SIZE>{});
-
-			if (mysql_stmt_bind_result(stmt_, &param_binds[0])) {
-				//                fprintf(stderr, "%s\n", mysql_error(con_));
-				has_error_ = true;
-				return {};
-			}
-
-			if (mysql_stmt_execute(stmt_)) {
-				//                fprintf(stderr, "%s\n", mysql_error(con_));
-				has_error_ = true;
-				return {};
-			}
-
-			while (mysql_stmt_fetch(stmt_) == 0) {
-				auto it = mp.begin();
-				iguana::for_each(tp, [&mp, &it](auto& item, auto i) {
-					using U = std::remove_reference_t<decltype(item)>;
-					if constexpr (std::is_same_v<std::string, U>) {
-						item = std::string(&(*it)[0], strlen((*it).data()));
-						it++;
-					}
-					else if constexpr (is_char_array_v<U>) {
-						memcpy(item, &(*it)[0], sizeof(U));
-					}
-					else if constexpr (iguana::is_reflection_v<U>) {
-						iguana::for_each(item, [&it, &item](auto ele, auto i) {
-							using V = std::remove_reference_t<decltype(std::declval<U>().*ele)>;
-							if constexpr (std::is_same_v<std::string, V>) {
-								item.*ele = std::string(&(*it)[0], strlen((*it).data()));
-								it++;
-							}
-							else if constexpr (is_char_array_v<V>) {
-								memcpy(item.*ele, &(*it)[0], sizeof(V));
-							}
-							});
-					}
-					}, std::make_index_sequence<SIZE>{});
-
-				if (index > 0)
-					v.push_back(std::move(tp));
-			}
-
+			exec_query(v, s, std::forward<Args&&>(args)...);
 			return v;
 		}
 
 		//if there is a sql error, how to tell the user? throw exception?
 		template<typename T, typename... Args>
-		constexpr std::enable_if_t<iguana::is_reflection_v<T>, std::vector<T>> query(Args&&... args) {
+		constexpr std::enable_if_t<iguana::is_reflection_v<T>, std::vector<T>> query(Args&&... args)
+		{
+
 			std::string sql = generate_query_sql<T>(args...);
 			constexpr auto SIZE = iguana::get_value<T>();
 
-			stmt_ = mysql_stmt_init(con_);
-			if (!stmt_) {
-				has_error_ = true;
-				return {};
+
+			mysql_prepared_statement statement(con_, sql);
+
+			if (0 == statement.get_field_count())
+			{
+				throw mysql_exception("Tried to run execute with execute_query");
 			}
 
-			if (mysql_stmt_prepare(stmt_, sql.c_str(), (unsigned long)sql.size())) {
-				has_error_ = true;
-				return {};
+
+			if (SIZE != statement.get_param_count())
+			{
+				std::string err_msg = sql + " ";
+				err_msg += "Incorrect number of parameters; command required ";
+				err_msg += std::to_string(statement.get_param_count());
+				err_msg += " but ";
+				err_msg += std::to_string(SIZE);
+				err_msg += " parameters were provided.";
+
+				throw mysql_exception(err_msg);
 			}
 
-			auto guard = guard_statment(stmt_);
 
-			std::array<MYSQL_BIND, SIZE> param_binds = {};
-			std::map<size_t, std::vector<char>> mp;
+
+			statement.set_param_bind();
+			auto result_set = statement.execute_query();
 
 			std::vector<T> v;
 			T t{};
-			int index = 0;
-			iguana::for_each(t, [&](auto item, auto i) {
-				constexpr auto Idx = decltype(i)::value;
-				using U = std::remove_reference_t<decltype(std::declval<T>().*item)>;
-				if constexpr (std::is_arithmetic_v<U>) {
-					param_binds[Idx].buffer_type = (enum_field_types)ormpp_mysql::type_to_id(identity<U>{});
-					param_binds[Idx].buffer = &(t.*item);
-					index++;
-				}
-				else if constexpr (std::is_same_v<std::string, U>) {
-					param_binds[Idx].buffer_type = MYSQL_TYPE_STRING;
-					std::vector<char> tmp(65536, 0);
-					mp.emplace(decltype(i)::value, tmp);
-					param_binds[Idx].buffer = &(mp.rbegin()->second[0]);
-					param_binds[Idx].buffer_length = (unsigned long)tmp.size();
-					index++;
-				}
-				else if constexpr (is_char_array_v<U>) {
-					param_binds[Idx].buffer_type = MYSQL_TYPE_VAR_STRING;
-					std::vector<char> tmp(sizeof(U), 0);
-					mp.emplace(decltype(i)::value, tmp);
-					param_binds[Idx].buffer = &(mp.rbegin()->second[0]);
-					param_binds[Idx].buffer_length = (unsigned long)sizeof(U);
-					index++;
-				}
-				});
-
-			if (index == 0) {
-				return {};
+			result_set.bind_result_by_object(t);
+			while (result_set.fetch_row_data_by_object(t))
+			{
+				v.push_back(t);
 			}
-
-			if (mysql_stmt_bind_result(stmt_, &param_binds[0])) {
-				//                fprintf(stderr, "%s\n", mysql_error(con_));
-				has_error_ = true;
-				return {};
-			}
-
-			if (mysql_stmt_execute(stmt_)) {
-				//                fprintf(stderr, "%s\n", mysql_error(con_));
-				has_error_ = true;
-				return {};
-			}
-
-			while (mysql_stmt_fetch(stmt_) == 0) {
-				using TP = decltype(iguana::get(std::declval<T>()));
-
-				iguana::for_each(t, [&mp, &t](auto item, auto i) {
-					using U = std::remove_reference_t<decltype(std::declval<T>().*item)>;
-					if constexpr (std::is_same_v<std::string, U>) {
-						auto& vec = mp[decltype(i)::value];
-						t.*item = std::string(&vec[0], strlen(vec.data()));
-					}
-					else if constexpr (is_char_array_v<U>) {
-						auto& vec = mp[decltype(i)::value];
-						memcpy(t.*item, vec.data(), vec.size());
-					}
-					});
-
-				for (auto& p : mp) {
-					p.second.assign(p.second.size(), 0);
-				}
-
-				v.push_back(std::move(t));
-				iguana::for_each(t, [&mp, &t](auto item, auto i) {
-					using U = std::remove_reference_t<decltype(std::declval<T>().*item)>;
-					if constexpr (std::is_arithmetic_v<U>) {
-						memset(&(t.*item), 0, sizeof(U));
-					}
-					});
-			}
-
 			return v;
 		}
-
-
-
 
 
 	private:
@@ -885,40 +704,8 @@ namespace ormpp
 			}
 		}
 
-
-		template<typename T>
-		uint64_t stmt_execute(const T& t) {
-			std::vector<MYSQL_BIND> param_binds;
-			auto it = auto_key_map_.find(get_name<T>());
-			std::string auto_key = (it == auto_key_map_.end()) ? "" : it->second;
-
-			iguana::for_each(t, [&t, &param_binds, &auto_key, this](const auto& v, auto i) {
-				/*if (!auto_key.empty() && auto_key == iguana::get_name<T>(decltype(i)::value).data())
-					return;*/
-
-				set_param_bind(param_binds, t.*v);
-				});
-
-			if (mysql_stmt_bind_param(stmt_, &param_binds[0])) {
-				//                fprintf(stderr, "%s\n", mysql_error(con_));
-				return INT_MIN;
-			}
-
-			if (mysql_stmt_execute(stmt_)) {
-				fprintf(stderr, "%s\n", mysql_error(con_));
-				return INT_MIN;
-			}
-
-			int count = (int)mysql_stmt_affected_rows(stmt_);
-			if (count == 0) {
-				return INT_MIN;
-			}
-
-			return count;
-		}
-
-
-		struct guard_statment {
+		struct guard_statment
+		{
 			guard_statment(MYSQL_STMT* stmt) :stmt_(stmt) {}
 			MYSQL_STMT* stmt_ = nullptr;
 			int status_ = 0;
@@ -932,55 +719,57 @@ namespace ormpp
 		};
 
 		template<typename T, typename... Args>
-		constexpr int insert_impl(const std::string& sql, const T& t, Args&&... args) {
-			stmt_ = mysql_stmt_init(con_);
-			if (!stmt_)
-				return INT_MIN;
+		constexpr uint64_t insert_impl(const std::string& sql, const T& object, Args&&... args)
+		{
+			static_assert(iguana::is_reflection_v<T>, "type must be reflection");
+			mysql_prepared_statement statement(con_, sql);
+			iguana::for_each(object,
+				[&statement, &object](auto& ele, auto I)
+				{
+					using U = std::remove_reference_t<decltype(object.*ele)>;
+					statement.set_index_param_bind(I, object.*ele);
 
-			if (mysql_stmt_prepare(stmt_, sql.c_str(), (int)sql.size())) {
-				return INT_MIN;
-			}
+				}
+			);
 
-			auto guard = guard_statment(stmt_);
+			statement.execute();
 
-			if (stmt_execute(t) < 0)
-				return INT_MIN;
-
-			return 1;
+			return statement.affected_rows();
 		}
 
 		template<typename T, typename... Args>
-		constexpr int insert_impl(const std::string& sql, const std::vector<T>& t, Args&&... args) {
-			stmt_ = mysql_stmt_init(con_);
-			if (!stmt_)
-				return INT_MIN;
+		constexpr uint64_t insert_impl(const std::string& sql, const std::vector<T>& v_object, Args&&... args)
+		{
 
-			if (mysql_stmt_prepare(stmt_, sql.c_str(), (int)sql.size())) {
-				return INT_MIN;
+			static_assert(iguana::is_reflection_v<T>, "type must be reflection");
+			mysql_prepared_statement statement(con_, sql);
+
+			uint64_t count = 0;
+			for (auto& object : v_object)
+			{
+				iguana::for_each(object,
+					[&statement, &object](auto& ele, auto I)
+					{
+						using U = std::remove_reference_t<decltype(object.*ele)>;
+						statement.set_index_param_bind(I, object.*ele);
+
+					}
+				);
+
+				statement.execute();
+				count += statement.affected_rows();
 			}
 
-			auto guard = guard_statment(stmt_);
+			return  count;
 
-			//transaction
-			begin();
-
-			for (auto& item : t) {
-				int r = stmt_execute(item);
-				if (r == INT_MIN) {
-					rollback();
-					return INT_MIN;
-				}
-			}
-
-			commit();
-
-			return (int)t.size();
 		}
 
 		template<typename... Args>
-		auto get_tp(int& timeout, Args&&... args) {
+		auto get_tp(int& timeout, Args&&... args)
+		{
 			auto tp = std::make_tuple(con_, std::forward<Args>(args)...);
-			if constexpr (sizeof...(Args) == 5) {
+			if constexpr (sizeof...(Args) == 5)
+			{
 				auto [c, s1, s2, s3, s4, i] = tp;
 				timeout = i;
 				return std::make_tuple(c, s1, s2, s3, s4);
@@ -991,9 +780,6 @@ namespace ormpp
 
 	private:
 		MYSQL* con_ = nullptr;
-		MYSQL_STMT* stmt_ = nullptr;
-		bool has_error_ = false;
-		std::string last_error_;
 		inline static std::map<std::string, std::string> auto_key_map_;
 	};
 
@@ -1073,8 +859,8 @@ namespace ormpp
 					}
 					else
 					{
-						std::cout << typeid(U).name() << std::endl;
-						static_assert(false, "Unknown value type");
+						std::cout << typeid(U).name() << " Unknown value type " << std::endl;
+						//static_assert(false, "Unknown value type");
 					}
 
 				},
@@ -1153,6 +939,140 @@ namespace ormpp
 			return false;
 		}
 
+		template<typename T >
+		void bind_result_by_object(T& object)
+		{
+			static_assert(iguana::is_reflection_v<T>, "type must be reflection");
+
+			if (iguana::get_value<T>() != get_field_count())
+			{
+				std::string err_msg("Incorrect number of output parameters; query required ");
+				err_msg += std::to_string(get_field_count());
+				err_msg += " but ";
+				err_msg += std::to_string(iguana::get_value<T>());
+				err_msg += " parameters were provided";
+				throw mysql_exception(err_msg);
+			}
+
+			if (out_parameters_.size() != get_field_count())
+			{
+				out_parameters_.resize(field_count_, {});
+				out_lengths_.resize(field_count_, 0);
+				out_null_flags_.resize(field_count_);
+			}
+
+
+			iguana::for_each(object,
+				[this, &object](auto& ele, auto I)
+				{
+					using U = std::remove_reference_t<decltype(object.*ele)>;
+					if constexpr (std::is_arithmetic_v<U>)
+					{
+						out_parameters_[I].buffer_type = (enum_field_types)ormpp_mysql::type_to_id(identity<U>{});
+						out_parameters_[I].buffer = &(object.*ele);
+						out_parameters_[I].buffer_length = sizeof(object.*ele);
+						out_parameters_[I].length = &out_lengths_[I];
+						out_parameters_[I].is_null = reinterpret_cast<bool*>(&out_null_flags_[I]);
+
+					}
+					else if constexpr (std::is_same_v<std::string, U>)
+					{
+						static char s_placeholder;
+						out_parameters_[I].buffer_type = MYSQL_TYPE_VAR_STRING;
+						out_parameters_[I].buffer = &s_placeholder;
+						out_parameters_[I].buffer_length = sizeof(s_placeholder);
+						out_parameters_[I].length = &out_lengths_[I];
+						out_parameters_[I].is_null = reinterpret_cast<bool*>(&out_null_flags_[I]);
+					}
+					else if constexpr (is_std_char_array_v<U>)
+					{
+						out_parameters_[I].buffer_type = MYSQL_TYPE_STRING;
+						out_parameters_[I].buffer = &(object.*ele)[0];
+						out_parameters_[I].buffer_length = sizeof(object.*ele);
+						out_parameters_[I].length = &out_lengths_[I];
+						out_parameters_[I].is_null = reinterpret_cast<bool*>(&out_null_flags_[I]);
+					}
+					else
+					{
+						std::cout << typeid(U).name() << std::endl;
+						static_assert(false, "Unknown value type");
+					}
+
+				}
+			);
+
+			if (mysql_stmt_bind_result(stmt_.get(), &out_parameters_[0]))
+			{
+				throw mysql_exception(stmt_.get());
+			}
+
+		}
+
+		template<typename T >
+		bool fetch_row_data_by_object(T& object)
+		{
+			static_assert(iguana::is_reflection_v<T>, "type must be reflection");
+
+			auto fetch_status = mysql_stmt_fetch(stmt_.get());
+			if (fetch_status == 0 || fetch_status == MYSQL_DATA_TRUNCATED)
+			{
+
+				if (fetch_status == MYSQL_DATA_TRUNCATED)
+				{
+					iguana::for_each(object,
+						[this, &object](auto& ele, auto I)
+						{
+							using U = std::remove_reference_t<decltype(object.*ele)>;
+							if constexpr (std::is_same_v<std::string, U>)
+							{
+								if (!out_null_flags_[I])
+								{
+									const size_t untruncated_length = out_lengths_[I];
+
+									(object.*ele).resize(untruncated_length);
+									MYSQL_BIND bind = {};
+									bind.buffer = (object.*ele).data();
+									bind.buffer_length = (object.*ele).size();
+
+									const int status = mysql_stmt_fetch_column(
+										stmt_.get(),
+										&bind,
+										I,
+										0);
+
+									if (0 != status)
+									{
+										throw mysql_exception(stmt_.get());
+									}
+
+								}
+
+							}
+						}
+					);
+				}
+
+				return true;
+			}
+
+			switch (fetch_status)
+			{
+			case MYSQL_NO_DATA:
+				// No problem! All rows fetched.
+				break;
+			case 1:
+			{  // Error occurred {
+				throw mysql_exception(stmt_.get());
+			}
+			default:
+			{
+				//assert(false && "Unknown error code from mysql_stmt_fetch");
+				throw mysql_exception(stmt_.get());
+			}
+			}
+
+			return false;
+		}
 
 	private:
 		std::shared_ptr<MYSQL_STMT> stmt_ = nullptr;
@@ -1164,7 +1084,7 @@ namespace ormpp
 
 	};
 
-	class  mysql_prepared_statement
+	class mysql_prepared_statement
 	{
 	public:
 		mysql_prepared_statement() = delete;
