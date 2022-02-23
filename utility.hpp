@@ -236,7 +236,14 @@ namespace ormpp{
 			sql = arg;
 		}
 		else {
-			append(sql, arg, std::forward<Args>(args)...);
+			if (sql.find("where") == std::string::npos && arg.find("where") == std::string::npos)
+			{
+				append(sql, "where", arg, std::forward<Args>(args)...);
+			}
+			else
+			{
+				append(sql, arg, std::forward<Args>(args)...);
+			}
 		}
 	}
 

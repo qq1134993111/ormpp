@@ -551,7 +551,7 @@ namespace ormpp
 				throw mysql_exception("Tried to run execute with execute_query");
 			}
 
-
+			/*
 			if (SIZE != statement.get_param_count())
 			{
 				std::string err_msg = sql + " ";
@@ -563,6 +563,7 @@ namespace ormpp
 
 				throw mysql_exception(err_msg);
 			}
+			*/
 
 
 
@@ -1067,11 +1068,13 @@ namespace ormpp
 				{
 					ss << "; There was an error freeing this statement";
 				}
+				/*
 				if (0 != mysql_stmt_close(stmt))
 				{
 					ss << "; There was an error closing this statement";
 				}
-
+				*/
+				
 				ss << ";arg sql is : " << sql;
 				throw mysql_exception(ss);
 			}
